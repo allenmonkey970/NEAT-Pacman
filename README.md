@@ -1,4 +1,7 @@
 # NEAT-Pacman: Neuroevolutionary Pacman Agent
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Python](https://img.shields.io/badge/python-3.7+-green.svg)
+![Last Updated](https://img.shields.io/badge/last%20updated-2025--05--03-brightgreen)
 
 This project implements a Pacman agent evolved using the [NEAT](https://neat-python.readthedocs.io/en/latest/) (NeuroEvolution of Augmenting Topologies) algorithm. The agent learns to play Pacman through simulation, using a feedforward neural network whose architecture and weights are optimized via evolutionary strategies. The project also includes hyperparameter optimization with [Optuna](https://optuna.org/).
 
