@@ -1,0 +1,5 @@
+numpy~=2.1.1
+matplotlib~=3.9.2
+freegames~=2.5.3
+optuna~=4.3.0
+neat-python~=0.92.0
