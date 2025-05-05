@@ -1,6 +1,6 @@
 [NEAT]
 fitness_criterion     = max
-fitness_threshold     = 1.5
+fitness_threshold     = 2.1
 pop_size              = 150
 reset_on_extinction   = True
 
@@ -24,13 +24,13 @@ bias_replace_rate       = 0.15
 compatibility_disjoint_coefficient = 1.0
 compatibility_weight_coefficient = 0.5
 conn_add_prob           = 0.7
-conn_delete_prob        = 0.6
+conn_delete_prob        = 0.45
 enabled_default         = True
 enabled_mutate_rate     = 0.05
 feed_forward            = false
 initial_connection      = partial_direct 0.2
-node_add_prob           = 0.5
-node_delete_prob        = 0.3
+node_add_prob           = 0.45
+node_delete_prob        = 0.35
 num_hidden              = 2
 num_inputs              = 76
 num_outputs             = 4
@@ -39,7 +39,7 @@ response_init_stdev     = 0.0
 response_max_value      = 30.0
 response_min_value      = -30.0
 response_mutate_power   = 0.0
-response_mutate_rate    = 0.0
+response_mutate_rate    = 1.0
 response_replace_rate   = 0.0
 weight_init_mean        = 0.0
 weight_init_stdev       = 1.0
