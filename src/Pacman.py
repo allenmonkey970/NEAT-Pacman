@@ -1,5 +1,6 @@
 import neat
 import pickle
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 from random import choice, random
@@ -18,6 +19,7 @@ MAZE_CLEAR_BONUS = 500 # Bonus for clearing the maze
 EVAL_EPSILON = 0.01     # Probability of random action (exploration) during evaluation
 EVAL_MULTI_OBJECTIVE = False  # Whether to use multi-objective fitness
 NUM_EVAL_RUNS = 3             # Evaluations per genome to average out stochastic ghost movement
+EXPORT_GIF = True            # When True, replay also saves an animated GIF to outputs/replay.gif
 
 # Pacman and game layout constants
 PACMAN_INIT = vector(-40, -80)
@@ -434,12 +436,14 @@ def world():
                 path.goto(x + 10, y + 10)
                 path.dot(2, 'white')
 
-def replay_winner(gen_file="outputs/best_genome.pkl"):
+def replay_winner(gen_file="outputs/best_genome.pkl", export_gif=False, gif_path="outputs/replay.gif"):
     """
     Replay a trained genome visually using the turtle graphics environment.
 
     Args:
         gen_file (str): Path to the pickled genome file.
+        export_gif (bool): If True, saves the replay as an animated GIF.
+        gif_path (str): Output path for the GIF file.
     """
     global pacman, ghosts, tiles, aim, path, writer
     path = Turtle(visible=False)
@@ -466,6 +470,35 @@ def replay_winner(gen_file="outputs/best_genome.pkl"):
     net = neat.nn.FeedForwardNetwork.create(winner, config)
 
     memory = []
+    frames = []
+    warmup_frames = [0]  # skip first N frames while the window finishes rendering
+
+    def capture_frame():
+        if warmup_frames[0] < 8:
+            warmup_frames[0] += 1
+            return
+        from PIL import ImageGrab
+        cv = getcanvas()
+        cv.update_idletasks()
+        x = cv.winfo_rootx()
+        y = cv.winfo_rooty()
+        w = cv.winfo_width()
+        h = cv.winfo_height()
+        frames.append(ImageGrab.grab(bbox=(x, y, x + w, y + h)))
+
+    def save_gif():
+        if not frames:
+            return
+        os.makedirs(os.path.dirname(gif_path), exist_ok=True)
+        frames[0].save(
+            gif_path,
+            save_all=True,
+            append_images=frames[1:],
+            duration=100,
+            loop=0,
+            optimize=False,
+        )
+        print(f"GIF saved to {gif_path}")
 
     def move():
         """
@@ -522,12 +555,18 @@ def replay_winner(gen_file="outputs/best_genome.pkl"):
             goto(point.x + 10, point.y + 10)
             dot(20, 'red')
         update()
+        if export_gif:
+            capture_frame()
         for point, course in ghosts:
             if abs(pacman - point) < 20:
                 print("Game over! Final score:", state['score'])
+                if export_gif:
+                    save_gif()
                 return
         if tiles.count(1) == 0:
             print("All dots eaten! Final score:", state['score'])
+            if export_gif:
+                save_gif()
             return
         ontimer(move, 100)
     world()
@@ -540,8 +579,8 @@ if __name__ == "__main__":
     if mode == "1":
         run_neat()
     elif mode == "2":
-        replay_winner()
+        replay_winner(export_gif=EXPORT_GIF)
     elif mode == "3":
         print("Enter generation number (e.g. 042):")
         gen_num = input().strip()
-        replay_winner(f"outputs/best_genome_gen{int(gen_num):03d}.pkl")
+        replay_winner(f"outputs/best_genome_gen{int(gen_num):03d}.pkl", export_gif=EXPORT_GIF)
