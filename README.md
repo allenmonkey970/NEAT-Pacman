@@ -1,34 +1,27 @@
 # NEAT-Pacman: Neuroevolutionary Pacman Agent
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.7+-green.svg)
-![Last Updated](https://img.shields.io/badge/last%20updated-2025--05--05-brightgreen)
 
-This project implements a Pacman agent evolved using the [NEAT](https://neat-python.readthedocs.io/en/latest/) (NeuroEvolution of Augmenting Topologies) algorithm. The agent learns to play Pacman through simulation, using a feedforward neural network whose architecture and weights are optimized via evolutionary strategies. The project also includes hyperparameter optimization with [Optuna](https://optuna.org/).
-
-## Features
-
-- **Fully playable Pacman** game simulated with a tile-based maze and ghosts
-- **NEAT neuroevolution** for reinforcement learning: both topology and weights evolve
-- **Parallel training** using Python's `multiprocessing` for faster evolution
-- **Replay mode**: visualize the best agent playing Pacman using Turtle graphics
-- **Optuna Bayesian optimization**: automatically tune NEAT hyperparameters for best performance
-- **Customizable fitness function**: supports both single and multi-objective reward strategies
-- **Configurable memory window** for agent state awareness
+A Pacman agent evolved using [NEAT](https://neat-python.readthedocs.io/en/latest/) (NeuroEvolution of Augmenting Topologies). The agent learns to navigate the maze and eat dots through neuroevolution — both the network topology and weights are optimized over generations. Includes Bayesian hyperparameter tuning via [Optuna](https://optuna.org/).
 
 ---
 
 ## Project Structure
 
 ```
-.
-├── Pacman.py           # Main game and NEAT training logic
-├── neat_config.txt     # NEAT configuration template
-├── optuna_opt.py       # Bayesian hyperparameter optimization script (Optuna)
-├── best_genome.pkl     # Saved best agent (after training)
-├── fitness_history.png # Fitness-over-generations plot (auto-generated)
-├── best_bayes_params.txt # Best found Optuna trial hyperparameters (auto-generated)
-├── requirements.txt    # Requirements to run Python scripts
-└── README.md           # This file
+NEAT-Pacman/
+├── src/
+│   ├── Pacman.py           # Game simulation, NEAT training, and replay logic
+│   ├── optimize.py         # Bayesian hyperparameter optimization (Optuna)
+│   ├── config/
+│   │   └── neat_config.txt # NEAT algorithm configuration
+│   └── outputs/            # Generated artifacts (gitignored)
+│       ├── best_genome.pkl      # Saved best agent (after training)
+│       ├── fitness_history.png  # Fitness-over-generations plot
+│       └── best_optuna_params.txt # Best Optuna trial results
+├── requirements.txt
+├── LICENSE
+└── README.md
 ```
 
 ---
@@ -38,105 +31,83 @@ This project implements a Pacman agent evolved using the [NEAT](https://neat-pyt
 ### Prerequisites
 
 - Python 3.7+
-- [neat-python](https://pypi.org/project/neat-python/)
-- numpy
-- matplotlib
-- optuna
-- freegames (for vector/floor operations)
-- turtle (usually included with Python)
-- [Optuna](https://optuna.org/)
 
-Install dependencies with:
+Install dependencies:
 
 ```bash
-pip install neat-python numpy matplotlib optuna freegames
+pip install -r requirements.txt
 ```
 
 ---
 
-### Basic Usage
+## Usage
 
-#### 1. **Train a Pacman Agent**
+All commands are run from the `src/` directory:
 
-Run the main Pacman script and choose "1" to train and evolve an agent:
+```bash
+cd src
+```
+
+### Train an Agent
 
 ```bash
 python Pacman.py
 ```
 
-Follow the prompt:
+Select option `1`. NEAT will evolve agents across generations. Training stops when:
+- An agent clears the entire maze (default, `TRAIN_UNTIL_CLEAR = True`), or
+- The generation limit (`NUM_GENERATIONS`) is reached.
 
-```
-1. Train and save winner
-2. Replay winner
-3. Replay genome from generation
-Type 1, 2 or 3:
-```
+The best genome is saved to `outputs/best_genome.pkl` and a fitness plot to `outputs/fitness_history.png`.
 
-- **1:** Trains the agent using NEAT. The best genome is saved as `best_genome.pkl` and a plot `fitness_history.png` is generated.
-
-#### 2. **Replay the Best Agent**
-
-After training, replay the best agent visually:
+### Replay the Best Agent
 
 ```bash
 python Pacman.py
 ```
-Select option **2**. This will run the Turtle graphics window and display the agent playing Pacman.
 
-#### 3. **Hyperparameter Optimization (Optional)**
+Select option `2`. Opens a Turtle graphics window showing the best-trained agent playing Pacman.
 
-To run Bayesian optimization and find the best NEAT config parameters, execute:
+### Tune Hyperparameters (Optional)
 
 ```bash
-python optuna_opt.py
+python optimize.py
 ```
 
-The script will run multiple trials, updating the config and saving the best found parameters to `best_bayes_params.txt`.
+Runs Bayesian optimization over NEAT hyperparameters using Optuna. Results are saved to `outputs/best_optuna_params.txt`. Apply the best parameters to `config/neat_config.txt` manually.
 
 ---
 
-## NEAT Configuration
+## Configuration
 
-The NEAT config file (`neat_config.txt`) controls all aspects of the neuroevolution, including population size, mutation rates, compatibility thresholds, and network structure. This file can be tuned manually or automatically via Optuna.
+Edit `src/config/neat_config.txt` to control NEAT behavior:
 
-Example snippet:
+| Parameter | Description |
+|---|---|
+| `pop_size` | Population size per generation |
+| `compatibility_threshold` | Species separation threshold |
+| `conn_add_prob` / `conn_delete_prob` | Connection mutation rates |
+| `node_add_prob` / `node_delete_prob` | Node mutation rates |
+| `weight_mutate_rate` | Weight mutation rate |
 
-```ini
-[NEAT]
-fitness_criterion     = max
-fitness_threshold     = 1.5
-pop_size              = 150
-reset_on_extinction   = True
+Key constants in `Pacman.py`:
 
-[DefaultGenome]
-activation_default      = relu
-...
-num_inputs              = 76
-num_outputs             = 4
-...
-```
-
-- The input and output sizes are determined by the Pacman state and the number of possible moves.
-- For full details, see the comments in `Pacman.py`.
+| Constant | Default | Description |
+|---|---|---|
+| `NUM_GENERATIONS` | `200` | Max training generations |
+| `NUM_EVAL_RUNS` | `3` | Episodes averaged per genome (reduces ghost randomness noise) |
+| `TRAIN_UNTIL_CLEAR` | `True` | Stop only when maze is fully cleared |
+| `EVAL_MULTI_OBJECTIVE` | `False` | Use raw score fitness (recommended) |
+| `MEMORY_SIZE` | `5` | Previous steps stored in agent memory |
 
 ---
 
-## How it Works
+## How It Works
 
-- **State Representation**: The neural network receives a vector of normalized game state features, including Pacman's position, ghost positions and directions, nearest dot, and a memory buffer of previous states.
-- **Action Selection**: The network outputs a value for each possible move; the highest is chosen (with some random exploration during training).
-- **Fitness Evaluation**: Agents are rewarded for eating dots, exploring new areas, surviving longer, and avoiding ghosts. Multi-objective fitness can be enabled.
-- **Evolution**: NEAT evolves the population over generations, optimizing both network weights and topology.
-
----
-
-## Customization
-
-- **Maze layout**: Change the `TILE_LAYOUT` in `Pacman.py`.
-- **Agent memory**: Adjust `MEMORY_SIZE` for longer or shorter agent memory.
-- **Reward shaping**: Modify the fitness function in `eval_genome`.
-- **Hyperparameters**: Tune `neat_config.txt` directly or use Optuna.
+- **State Representation**: 76 normalized inputs — Pacman position, ghost positions/directions, nearest dot direction, available moves, junction/corridor flags, distance delta to nearest dot, and a rolling memory buffer.
+- **Action Selection**: Network outputs a value for each of 4 moves; the highest is chosen. A small epsilon (`EVAL_EPSILON = 0.01`) adds exploration during training.
+- **Fitness Function**: Agents earn `+15` per dot eaten, `+2` for exploring new tiles, `+0.05` per step alive, `+500` for clearing the maze. Dying costs `-150`. Stagnation (50 steps without eating) costs `-5`.
+- **Evolution**: NEAT adds/removes nodes and connections over generations, speciated by genome compatibility distance.
 
 ---
 
@@ -145,14 +116,10 @@ num_outputs             = 4
 - [NEAT-Python Documentation](https://neat-python.readthedocs.io/en/latest/)
 - [Optuna Documentation](https://optuna.org/)
 - [Freegames Library](https://pypi.org/project/freegames/)
-- [Turtle Graphics Docs](https://docs.python.org/3/library/turtle.html)
+- [Original Pacman game](https://github.com/grantjenks/free-python-games)
 
 ---
 
 ## License
 
-[MIT License](https://github.com/allenmonkey970/PacManAi/blob/main/LICENSE)
-
-## Acknowledgments
-
-[Orginal Pacman game](https://github.com/grantjenks/free-python-games)
+[MIT License](LICENSE)

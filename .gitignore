@@ -1,3 +1,10 @@
+# Generated training outputs (models, plots, tuning results)
+src/outputs/
+!src/outputs/.gitkeep
+
+# Optuna trial config (generated at runtime)
+src/config/neat_config_trial.txt
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

@@ -9,6 +9,7 @@ from multiprocessing import cpu_count
 
 # ==== CONSTANTS ====
 
+TRAIN_UNTIL_CLEAR = True      # When True, training stops only when an agent clears the entire maze
 NUM_GENERATIONS = 200  # Number of generations to train NEAT
 MEMORY_SIZE = 5        # Number of previous steps to store as memory
 POSSIBLE_MOVES = [(5, 0), (-5, 0), (0, 5), (0, -5)]  # Possible movement directions for Pacman
@@ -367,7 +368,7 @@ def eval_population(genomes, config):
     pe = ParallelEvaluator(cpu_count(), eval_genome_picklable)
     pe.evaluate(genomes, config)
 
-def run_neat(config_path="neat_config.txt"):
+def run_neat(config_path="config/neat_config.txt"):
     """
     Run the NEAT algorithm to train Pacman agents and plot/serialize results.
     Args:
@@ -381,15 +382,20 @@ def run_neat(config_path="neat_config.txt"):
         neat.DefaultSpeciesSet, neat.DefaultStagnation,
         config_path
     )
+    if TRAIN_UNTIL_CLEAR:
+        num_dots = TILE_LAYOUT.count(1)
+        # Threshold only reachable if MAZE_CLEAR_BONUS was awarded (maze fully cleared)
+        config.fitness_threshold = num_dots * 15 + MAZE_CLEAR_BONUS - 50
+        print(f"TRAIN_UNTIL_CLEAR: fitness threshold set to {config.fitness_threshold:.1f} ({num_dots} dots)")
     pop = neat.Population(config)
     pop.add_reporter(neat.StdOutReporter(True))
     stats = neat.StatisticsReporter()
     pop.add_reporter(stats)
     winner = pop.run(eval_population, NUM_GENERATIONS)
     print('\nBest genome:\n', winner)
-    with open("best_genome.pkl", "wb") as f:
+    with open("outputs/best_genome.pkl", "wb") as f:
         pickle.dump(winner, f)
-    print("Best genome saved as best_genome.pkl")
+    print("Best genome saved as outputs/best_genome.pkl")
 
     # Plot fitness history
     if hasattr(stats, "most_fit_genomes"):
@@ -398,9 +404,9 @@ def run_neat(config_path="neat_config.txt"):
         plt.xlabel("Generation")
         plt.ylabel("Fitness")
         plt.title("Most Fit Genome's Fitness Over Generations")
-        plt.savefig("fitness_history.png")
+        plt.savefig("outputs/fitness_history.png")
         plt.show()
-        print("Fitness history plot saved as fitness_history.png")
+        print("Fitness history plot saved as outputs/fitness_history.png")
 
     return winner.fitness
 
@@ -428,7 +434,7 @@ def world():
                 path.goto(x + 10, y + 10)
                 path.dot(2, 'white')
 
-def replay_winner(gen_file="best_genome.pkl"):
+def replay_winner(gen_file="outputs/best_genome.pkl"):
     """
     Replay a trained genome visually using the turtle graphics environment.
 
@@ -453,7 +459,7 @@ def replay_winner(gen_file="best_genome.pkl"):
     config = neat.Config(
         neat.DefaultGenome, neat.DefaultReproduction,
         neat.DefaultSpeciesSet, neat.DefaultStagnation,
-        "neat_config.txt"
+        "config/neat_config.txt"
     )
     with open(gen_file, "rb") as f:
         winner = pickle.load(f)
@@ -538,4 +544,4 @@ if __name__ == "__main__":
     elif mode == "3":
         print("Enter generation number (e.g. 042):")
         gen_num = input().strip()
-        replay_winner(f"best_genome_gen{int(gen_num):03d}.pkl")
+        replay_winner(f"outputs/best_genome_gen{int(gen_num):03d}.pkl")
