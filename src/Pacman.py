@@ -1,8 +1,10 @@
 import neat
 import pickle
 import os
+import sys
 import numpy as np
 import matplotlib.pyplot as plt
+from collections import deque
 from random import choice, random
 from freegames import floor, vector
 from turtle import *
@@ -12,7 +14,8 @@ from multiprocessing import cpu_count
 
 TRAIN_UNTIL_CLEAR = True      # When True, training stops only when an agent clears the entire maze
 NUM_GENERATIONS = 200  # Number of generations to train NEAT
-MEMORY_SIZE = 5        # Number of previous steps to store as memory
+MEMORY_SIZE = 2        # Number of previous steps to store as memory
+LOCAL_GRID_SIZE = 3    # Side length of egocentric wall/dot/ghost grid (LOCAL_GRID_SIZE × LOCAL_GRID_SIZE)
 POSSIBLE_MOVES = [(5, 0), (-5, 0), (0, 5), (0, -5)]  # Possible movement directions for Pacman
 COMBO_BONUS = 8        # Bonus for eating dots in a row
 MAZE_CLEAR_BONUS = 500 # Bonus for clearing the maze
@@ -170,7 +173,34 @@ def is_corridor(sim_pacman, sim_tiles):
     moves = available_moves(sim_pacman, sim_tiles)
     return len(moves) == 2
 
-def get_nn_input(sim_pacman, sim_ghosts, sim_tiles, step=0, prev_dot_dist=None, memory=None):
+# Recompute when MEMORY_SIZE or LOCAL_GRID_SIZE change.
+NN_INPUT_SIZE = (2 + 4*4 + 3 + 5 + 1) + MEMORY_SIZE * (2 + 4*2) + LOCAL_GRID_SIZE * LOCAL_GRID_SIZE
+
+def get_local_grid(sim_pacman, sim_tiles, sim_ghosts):
+    """Return a flattened LOCAL_GRID_SIZE×LOCAL_GRID_SIZE egocentric grid centred on Pacman.
+
+    Cell values: 0.0=wall/OOB, 0.25=empty path, 0.5=dot, 1.0=ghost.
+    """
+    half = LOCAL_GRID_SIZE // 2
+    ghost_positions = {(g[0].x, g[0].y) for g in sim_ghosts}
+    grid = []
+    for row in range(-half, half + 1):
+        for col in range(-half, half + 1):
+            tx = sim_pacman.x + col * 20
+            ty = sim_pacman.y + row * 20
+            ix = int((tx + 200) / 20)
+            iy = int((180 - ty) / 20)
+            if 0 <= ix < 20 and 0 <= iy < 20:
+                tile_val = sim_tiles[ix + iy * 20]
+                cell = 0.0 if tile_val == 0 else (0.5 if tile_val == 1 else 0.25)
+            else:
+                cell = 0.0
+            if (tx, ty) in ghost_positions:
+                cell = 1.0
+            grid.append(cell)
+    return grid
+
+def get_nn_input(sim_pacman, sim_ghosts, sim_tiles, step=0, prev_dot_dist=None, memory=None, step_history=None):
     """
     Prepare and normalize neural network input vector for Pacman.
 
@@ -203,6 +233,10 @@ def get_nn_input(sim_pacman, sim_ghosts, sim_tiles, step=0, prev_dot_dist=None, 
     curr_dot_dist = closest_dot[2]
     delta_dot_dist = 0.0 if prev_dot_dist is None else prev_dot_dist - curr_dot_dist
 
+    # How many of the last N steps were spent on the current tile (revisit pressure)
+    cur_pos = (sim_pacman.x, sim_pacman.y)
+    revisit_count = (sum(1 for p in step_history if p == cur_pos) / 10.0) if step_history else 0.0
+
     # Memory buffer: previous positions and ghost positions
     memory_flat = []
     if memory and len(memory) == MEMORY_SIZE:
@@ -214,13 +248,20 @@ def get_nn_input(sim_pacman, sim_ghosts, sim_tiles, step=0, prev_dot_dist=None, 
     else:
         memory_flat = [0.0] * (MEMORY_SIZE * (2 + 4 * 2))
 
-    return np.array(
-        [px, py] + ghosts_rel + closest_dot + [num_dots, num_open_dirs, is_junc, is_corr, delta_dot_dist] + memory_flat,
+    local_grid = get_local_grid(sim_pacman, sim_tiles, sim_ghosts)
+
+    nn_input = np.array(
+        [px, py] + ghosts_rel + closest_dot
+        + [num_dots, num_open_dirs, is_junc, is_corr, delta_dot_dist, revisit_count]
+        + memory_flat + local_grid,
         dtype=np.float32
     )
+    assert len(nn_input) == NN_INPUT_SIZE, (
+        f"NN input size mismatch: got {len(nn_input)}, expected {NN_INPUT_SIZE}. "
+        "Update NN_INPUT_SIZE or get_nn_input if you change MEMORY_SIZE, LOCAL_GRID_SIZE, or input features."
+    )
+    return nn_input
 
-# Update this if you change MEMORY_SIZE or input features.
-NN_INPUT_SIZE = (2 + 4*4 + 3 + 5) + MEMORY_SIZE * (2 + 4*2)
 
 def eval_genome_picklable(genome, config):
     """
@@ -262,19 +303,18 @@ def eval_genome(genome, config, epsilon=0.1, multi_objective=False):
     min_dist_to_ghost = float('inf')
     max_explore = 0
     prev_dot_dist = None
-    memory = []
+    memory = deque(maxlen=MEMORY_SIZE)
+    step_history = deque(maxlen=10)
 
     net = neat.nn.FeedForwardNetwork.create(genome, config)
     for step in range(500):
-        # Update memory
-        if len(memory) == MEMORY_SIZE:
-            memory.pop(0)
+        step_history.append((sim_pacman.x, sim_pacman.y))
         memory.append({
             'pacman': (sim_pacman.x, sim_pacman.y),
             'ghosts': [(g[0].x, g[0].y) for g in sim_ghosts]
         })
 
-        nn_input = get_nn_input(sim_pacman, sim_ghosts, sim_tiles, step, prev_dot_dist, memory)
+        nn_input = get_nn_input(sim_pacman, sim_ghosts, sim_tiles, step, prev_dot_dist, memory, step_history)
         output = net.activate(nn_input)
         if random() < epsilon:
             move_idx = np.random.randint(0, 4)
@@ -469,7 +509,8 @@ def replay_winner(gen_file="outputs/best_genome.pkl", export_gif=False, gif_path
         winner = pickle.load(f)
     net = neat.nn.FeedForwardNetwork.create(winner, config)
 
-    memory = []
+    memory = deque(maxlen=MEMORY_SIZE)
+    step_history = deque(maxlen=10)
     frames = []
     warmup_frames = [0]  # skip first N frames while the window finishes rendering
 
@@ -477,7 +518,12 @@ def replay_winner(gen_file="outputs/best_genome.pkl", export_gif=False, gif_path
         if warmup_frames[0] < 8:
             warmup_frames[0] += 1
             return
-        from PIL import ImageGrab
+        if sys.platform not in ('win32', 'darwin'):
+            return
+        try:
+            from PIL import ImageGrab
+        except ImportError:
+            return
         cv = getcanvas()
         cv.update_idletasks()
         x = cv.winfo_rootx()
@@ -507,15 +553,13 @@ def replay_winner(gen_file="outputs/best_genome.pkl", export_gif=False, gif_path
         writer.undo()
         writer.write(state['score'])
         clear()
-        # update memory
-        if len(memory) == MEMORY_SIZE:
-            memory.pop(0)
+        step_history.append((pacman.x, pacman.y))
         memory.append({
             'pacman': (pacman.x, pacman.y),
             'ghosts': [(g[0].x, g[0].y) for g in ghosts]
         })
 
-        nn_input = get_nn_input(pacman, ghosts, tiles, memory=memory)
+        nn_input = get_nn_input(pacman, ghosts, tiles, memory=memory, step_history=step_history)
         output = net.activate(nn_input)
         move_idx = np.argmax(output)
         dx, dy = POSSIBLE_MOVES[move_idx]
