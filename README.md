@@ -102,6 +102,16 @@ Key constants in `Pacman.py`:
 
 ---
 
+## Demo
+
+### Trained Agent Replay
+![Pacman agent replay](assets/replay.gif)
+
+### Fitness Over Generations
+![Fitness history](assets/fitness_history.png)
+
+---
+
 ## How It Works
 
 - **State Representation**: 76 normalized inputs — Pacman position, ghost positions/directions, nearest dot direction, available moves, junction/corridor flags, distance delta to nearest dot, and a rolling memory buffer.
