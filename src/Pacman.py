@@ -47,11 +47,12 @@ EVAL_EPSILON = 0.0      # No random moves during evaluation — let the network 
 EVAL_MULTI_OBJECTIVE = False  # Whether to use multi-objective fitness
 NUM_EVAL_RUNS = 10            # Evaluations per genome (5 seeded for stability + 5 random for generalization)
 EXPORT_GIF = True            # When True, replay also saves an animated GIF to outputs/replay.gif
-STEP_LIMIT = 4000            # Maximum steps per episode
-STAGNATION_THRESHOLD = 75    # Steps without eating a dot before penalty kicks in
-STAGNATION_PENALTY = 1       # Penalty applied when stagnation threshold is hit
-DEATH_PENALTY = 25           # Penalty per ghost collision (agent respawns instead of dying)
-MAX_DEATHS = 8               # Maximum deaths before the episode ends
+STEP_LIMIT = 6000            # Maximum steps per episode
+STAGNATION_THRESHOLD = 50    # Steps without eating a dot before penalty kicks in
+STAGNATION_PENALTY = 3       # Penalty applied when stagnation threshold is hit
+DEATH_PENALTY = 50           # Penalty per ghost collision (agent respawns instead of dying)
+MAX_DEATHS = 3               # Maximum deaths before the episode ends
+SURVIVAL_BONUS = 100         # Bonus per unused death at end of episode (max_deaths - deaths)
 
 # Pacman and game layout constants
 PACMAN_INIT = Vec(-40, -80)
@@ -167,7 +168,7 @@ def _simulate_game_jit(
     link_src, link_weight, link_start, link_count, output_indices,
     seed, step_limit, max_deaths, death_penalty,
     stag_thresh, stag_pen, combo_bonus, maze_clear_bonus, epsilon,
-    memory_size, local_grid_size
+    memory_size, local_grid_size, survival_bonus
 ):
     if seed >= 0:
         np.random.seed(seed)
@@ -407,6 +408,7 @@ def _simulate_game_jit(
         score += 0.05
 
     cleared = 1 if dots_rem == 0 else 0
+    score += survival_bonus * (max_deaths - deaths)
     return score, dots_eaten, deaths, last_step + 1, n_vis, cleared
 
 def extract_nn_arrays(net):
@@ -658,7 +660,7 @@ def eval_genome(genome, config, epsilon=0.1, multi_objective=False, verbose=Fals
         STEP_LIMIT, MAX_DEATHS, DEATH_PENALTY,
         STAGNATION_THRESHOLD, STAGNATION_PENALTY,
         COMBO_BONUS, MAZE_CLEAR_BONUS, epsilon,
-        MEMORY_SIZE, LOCAL_GRID_SIZE
+        MEMORY_SIZE, LOCAL_GRID_SIZE, SURVIVAL_BONUS
     )
     sc, de, dth, su, nv, clr = result
     if verbose:
