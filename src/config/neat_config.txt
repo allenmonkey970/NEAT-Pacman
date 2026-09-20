@@ -1,8 +1,9 @@
 [NEAT]
 fitness_criterion     = max
 fitness_threshold     = 9999.0
-pop_size              = 150
+pop_size              = 300
 reset_on_extinction   = True
+no_fitness_termination = False
 
 [DefaultGenome]
 activation_default      = relu
@@ -28,10 +29,10 @@ conn_delete_prob        = 0.45
 enabled_default         = True
 enabled_mutate_rate     = 0.05
 feed_forward            = True
-initial_connection      = partial_direct 0.2
-node_add_prob           = 0.45
-node_delete_prob        = 0.35
-num_hidden              = 2
+initial_connection      = partial_direct 0.3
+node_add_prob           = 0.5
+node_delete_prob        = 0.3
+num_hidden              = 4
 num_inputs              = 56
 num_outputs             = 4
 response_init_mean      = 1.0

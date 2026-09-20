@@ -13,16 +13,21 @@ from multiprocessing import cpu_count
 # ==== CONSTANTS ====
 
 TRAIN_UNTIL_CLEAR = True      # When True, training stops only when an agent clears the entire maze
-NUM_GENERATIONS = 200  # Number of generations to train NEAT
+NUM_GENERATIONS = 500  # Number of generations to train NEAT
 MEMORY_SIZE = 2        # Number of previous steps to store as memory
 LOCAL_GRID_SIZE = 3    # Side length of egocentric wall/dot/ghost grid (LOCAL_GRID_SIZE × LOCAL_GRID_SIZE)
 POSSIBLE_MOVES = [(5, 0), (-5, 0), (0, 5), (0, -5)]  # Possible movement directions for Pacman
 COMBO_BONUS = 8        # Bonus for eating dots in a row
 MAZE_CLEAR_BONUS = 500 # Bonus for clearing the maze
-EVAL_EPSILON = 0.01     # Probability of random action (exploration) during evaluation
+EVAL_EPSILON = 0.0      # No random moves during evaluation — let the network play deterministically
 EVAL_MULTI_OBJECTIVE = False  # Whether to use multi-objective fitness
-NUM_EVAL_RUNS = 3             # Evaluations per genome to average out stochastic ghost movement
+NUM_EVAL_RUNS = 10            # Evaluations per genome (5 seeded for stability + 5 random for generalization)
 EXPORT_GIF = True            # When True, replay also saves an animated GIF to outputs/replay.gif
+STEP_LIMIT = 4000            # Maximum steps per episode
+STAGNATION_THRESHOLD = 75    # Steps without eating a dot before penalty kicks in
+STAGNATION_PENALTY = 1       # Penalty applied when stagnation threshold is hit
+DEATH_PENALTY = 25           # Penalty per ghost collision (agent respawns instead of dying)
+MAX_DEATHS = 8               # Maximum deaths before the episode ends
 
 # Pacman and game layout constants
 PACMAN_INIT = vector(-40, -80)
@@ -98,34 +103,25 @@ def valid(point):
         return False
     return point.x % 20 == 0 or point.y % 20 == 0
 
-def find_nearest_dot(sim_pacman, sim_tiles):
-    """
-    Find the nearest dot (pellet) to Pacman.
-
-    Args:
-        sim_pacman (vector): Pacman's position.
-        sim_tiles (list): Current tile layout.
-
-    Returns:
-        list: [dx, dy, norm_dist], relative and normalized position/distance to the nearest dot.
-    """
+def find_nearest_dot(sim_pacman, dot_positions):
     min_dist = float('inf')
     nearest = None
     px, py = sim_pacman.x, sim_pacman.y
-    for idx, tile in enumerate(sim_tiles):
-        if tile == 1:
-            tx = (idx % 20) * 20 - 200
-            ty = 180 - (idx // 20) * 20
-            dist = abs(px - tx) + abs(py - ty)
-            if dist < min_dist:
-                min_dist = dist
-                nearest = (tx, ty)
+    for tx, ty in dot_positions:
+        dist = abs(px - tx) + abs(py - ty)
+        if dist < min_dist:
+            min_dist = dist
+            nearest = (tx, ty)
     if nearest is None:
         return [0, 0, 0]
     dx = (nearest[0] - px) / 200
     dy = (nearest[1] - py) / 200
     norm_dist = min_dist / 400
     return [dx, dy, norm_dist]
+
+def build_dot_positions(sim_tiles):
+    return {((idx % 20) * 20 - 200, 180 - (idx // 20) * 20)
+            for idx, tile in enumerate(sim_tiles) if tile == 1}
 
 def available_moves(sim_pacman, sim_tiles):
     """
@@ -200,44 +196,27 @@ def get_local_grid(sim_pacman, sim_tiles, sim_ghosts):
             grid.append(cell)
     return grid
 
-def get_nn_input(sim_pacman, sim_ghosts, sim_tiles, step=0, prev_dot_dist=None, memory=None, step_history=None):
-    """
-    Prepare and normalize neural network input vector for Pacman.
-
-    Args:
-        sim_pacman (vector): Pacman's position.
-        sim_ghosts (list): Ghost positions and directions.
-        sim_tiles (list): Tile layout.
-        step (int, optional): Current step in episode.
-        prev_dot_dist (float, optional): Previous distance to nearest dot.
-        memory (list, optional): Memory buffer of previous states.
-
-    Returns:
-        np.ndarray: Input vector for neural network.
-    """
+def get_nn_input(sim_pacman, sim_ghosts, sim_tiles, step=0, prev_dot_dist=None, memory=None, step_history=None, dot_positions=None, dots_remaining=0):
     px, py = sim_pacman.x / 200.0, sim_pacman.y / 200.0
 
-    # Ghosts' info: relative positions and directions
     ghosts_rel = []
     for ghost in sim_ghosts:
         gx, gy = ghost[0].x / 200.0, ghost[0].y / 200.0
         ghosts_rel.extend([gx - px, gy - py, ghost[1].x / 5.0, ghost[1].y / 5.0])
 
-    closest_dot = find_nearest_dot(sim_pacman, sim_tiles)
+    closest_dot = find_nearest_dot(sim_pacman, dot_positions)
 
-    num_dots = sim_tiles.count(1) / 100.0
+    num_dots = dots_remaining / 100.0
     moves = available_moves(sim_pacman, sim_tiles)
     num_open_dirs = len(moves) / 4.0
-    is_junc = 1 if is_junction(sim_pacman, sim_tiles) else 0
-    is_corr = 1 if is_corridor(sim_pacman, sim_tiles) else 0
+    is_junc = 1 if len(moves) > 2 else 0
+    is_corr = 1 if len(moves) == 2 else 0
     curr_dot_dist = closest_dot[2]
     delta_dot_dist = 0.0 if prev_dot_dist is None else prev_dot_dist - curr_dot_dist
 
-    # How many of the last N steps were spent on the current tile (revisit pressure)
     cur_pos = (sim_pacman.x, sim_pacman.y)
     revisit_count = (sum(1 for p in step_history if p == cur_pos) / 10.0) if step_history else 0.0
 
-    # Memory buffer: previous positions and ghost positions
     memory_flat = []
     if memory and len(memory) == MEMORY_SIZE:
         for mem in memory:
@@ -275,46 +254,53 @@ def eval_genome_picklable(genome, config):
     Returns:
         float: Average fitness score across NUM_EVAL_RUNS episodes.
     """
-    scores = [eval_genome(genome, config, epsilon=EVAL_EPSILON, multi_objective=EVAL_MULTI_OBJECTIVE)
-              for _ in range(NUM_EVAL_RUNS)]
+    n_seeded = NUM_EVAL_RUNS // 2
+    seeded = [eval_genome(genome, config, epsilon=EVAL_EPSILON, multi_objective=EVAL_MULTI_OBJECTIVE, seed=i)
+              for i in range(n_seeded)]
+    random_runs = [eval_genome(genome, config, epsilon=EVAL_EPSILON, multi_objective=EVAL_MULTI_OBJECTIVE)
+                   for _ in range(NUM_EVAL_RUNS - n_seeded)]
+    scores = seeded + random_runs
     return sum(scores) / len(scores)
 
-def eval_genome(genome, config, epsilon=0.1, multi_objective=False):
+def eval_genome(genome, config, epsilon=0.1, multi_objective=False, verbose=False, seed=None):
     """
     Simulate a game for a single genome and compute its fitness.
 
-    Args:
-        genome: NEAT genome.
-        config: NEAT configuration.
-        epsilon (float): Exploration rate.
-        multi_objective (bool): Use multi-objective fitness.
-
     Returns:
-        float: Fitness value.
+        float or dict: Fitness value, or dict with stats if verbose=True.
     """
+    import random as rng_module
+    if seed is not None:
+        rng_module.seed(seed)
+
     sim_pacman = PACMAN_INIT.copy()
     sim_ghosts = [ [g[0].copy(), g[1].copy()] for g in GHOSTS_INIT ]
     sim_tiles = TILE_LAYOUT.copy()
+    dot_positions = build_dot_positions(sim_tiles)
+    total_dots = len(dot_positions)
+    dots_remaining = total_dots
     score = 0.0
     dots_eaten = 0
+    deaths = 0
+    combo = 0
     steps_without_progress = 0
-    alive = True
-    visited = set()
+    visited_tiles = set()
     min_dist_to_ghost = float('inf')
-    max_explore = 0
     prev_dot_dist = None
     memory = deque(maxlen=MEMORY_SIZE)
     step_history = deque(maxlen=10)
+    milestones_hit = set()
+    invincible_until = 0
 
     net = neat.nn.FeedForwardNetwork.create(genome, config)
-    for step in range(500):
+    for step in range(STEP_LIMIT):
         step_history.append((sim_pacman.x, sim_pacman.y))
         memory.append({
             'pacman': (sim_pacman.x, sim_pacman.y),
             'ghosts': [(g[0].x, g[0].y) for g in sim_ghosts]
         })
 
-        nn_input = get_nn_input(sim_pacman, sim_ghosts, sim_tiles, step, prev_dot_dist, memory, step_history)
+        nn_input = get_nn_input(sim_pacman, sim_ghosts, sim_tiles, step, prev_dot_dist, memory, step_history, dot_positions, dots_remaining)
         output = net.activate(nn_input)
         if random() < epsilon:
             move_idx = np.random.randint(0, 4)
@@ -325,78 +311,127 @@ def eval_genome(genome, config, epsilon=0.1, multi_objective=False):
         if valid(next_pos):
             sim_pacman.move(vector(dx, dy))
         else:
-            score -= 3
+            score -= 0.5
 
         idx = offset(sim_pacman)
-        pos_tuple = (sim_pacman.x, sim_pacman.y)
+        tile_pos = (floor(sim_pacman.x, 20), floor(sim_pacman.y, 20))
 
-        # Exploration bonus for new positions
-        if pos_tuple not in visited:
-            visited.add(pos_tuple)
-            score += 2.0
-            max_explore += 1
+        if tile_pos not in visited_tiles:
+            visited_tiles.add(tile_pos)
+            score += 3.0
 
-        # Dot eating: primary signal
         if idx < len(sim_tiles) and sim_tiles[idx] == 1:
             sim_tiles[idx] = 2
-            score += 15
+            dot_positions.discard(((idx % 20) * 20 - 200, 180 - (idx // 20) * 20))
+            dots_remaining -= 1
+            score += 20
+            combo += 1
+            if combo > 1:
+                score += COMBO_BONUS * min(combo, 10)
             dots_eaten += 1
             steps_without_progress = 0
+
+            pct = dots_eaten / total_dots
+            if pct >= 0.25 and 25 not in milestones_hit:
+                milestones_hit.add(25)
+                score += 50
+            if pct >= 0.50 and 50 not in milestones_hit:
+                milestones_hit.add(50)
+                score += 100
+            if pct >= 0.75 and 75 not in milestones_hit:
+                milestones_hit.add(75)
+                score += 200
+            if pct >= 0.90 and 90 not in milestones_hit:
+                milestones_hit.add(90)
+                score += 300
         else:
+            combo = 0
             steps_without_progress += 1
 
-        # Mild penalty for not eating dots (lenient threshold to allow ghost navigation)
-        if steps_without_progress > 50:
-            score -= 5
+        if steps_without_progress > STAGNATION_THRESHOLD:
+            score -= STAGNATION_PENALTY
             steps_without_progress = 0
 
-        if sim_tiles.count(1) == 0:
+        if dots_remaining == 0:
             score += MAZE_CLEAR_BONUS
             break
 
-        # Move ghosts
-        for ghost in sim_ghosts:
-            ghost_pos, ghost_dir = ghost
-            if valid(ghost_pos + ghost_dir):
-                ghost_pos.move(ghost_dir)
-            else:
-                options = [vector(5, 0), vector(-5, 0), vector(0, 5), vector(0, -5)]
-                plan = choice(options)
-                ghost_dir.x = plan.x
-                ghost_dir.y = plan.y
+        # Move ghosts every 2nd step (Pacman is 2x faster)
+        if step % 2 == 0:
+            for ghost in sim_ghosts:
+                ghost_pos, ghost_dir = ghost
+                if valid(ghost_pos + ghost_dir):
+                    ghost_pos.move(ghost_dir)
+                else:
+                    options = [vector(5, 0), vector(-5, 0), vector(0, 5), vector(0, -5)]
+                    plan = choice(options)
+                    ghost_dir.x = plan.x
+                    ghost_dir.y = plan.y
 
-        # Ghost collision and proximity — no positive reward for distance (prevents hiding)
-        for ghost_pos, _ in sim_ghosts:
-            dist = abs(sim_pacman - ghost_pos)
-            if dist < 20:
-                score -= 150  # reduced: dying after 10 dots still nets positive
-                alive = False
+        hit_ghost = False
+        if step >= invincible_until:
+            for ghost_pos, _ in sim_ghosts:
+                dist = abs(sim_pacman - ghost_pos)
+                if dist < 20:
+                    score -= DEATH_PENALTY
+                    deaths += 1
+                    combo = 0
+                    hit_ghost = True
+                    break
+                elif dist < 40:
+                    score -= 1
+                if dist < min_dist_to_ghost:
+                    min_dist_to_ghost = dist
+
+        if hit_ghost:
+            if deaths >= MAX_DEATHS:
                 break
-            elif dist < 40:
-                score -= 1
-            if dist < min_dist_to_ghost:
-                min_dist_to_ghost = dist
+            sim_pacman = PACMAN_INIT.copy()
+            sim_ghosts = [ [g[0].copy(), g[1].copy()] for g in GHOSTS_INIT ]
+            invincible_until = step + 15
+            steps_without_progress = 0
+            prev_dot_dist = None
+            memory.clear()
+            step_history.clear()
+            continue
 
-        # Dense guidance: reward moving toward nearest dot
-        curr_dot_dist = find_nearest_dot(sim_pacman, sim_tiles)[2]
+        curr_dot_dist = find_nearest_dot(sim_pacman, dot_positions)[2]
         if prev_dot_dist is not None:
-            score += (prev_dot_dist - curr_dot_dist) * 5
+            score += (prev_dot_dist - curr_dot_dist) * 1
         prev_dot_dist = curr_dot_dist
 
-        if not alive:
-            break
-
-        # Small living bonus for each step
         score += 0.05
 
-    # Optional: multi-objective fitness
+    cleared = dots_remaining == 0
+
+    if verbose:
+        return {
+            'fitness': score,
+            'dots_eaten': dots_eaten,
+            'total_dots': total_dots,
+            'deaths': deaths,
+            'steps_used': step + 1,
+            'unique_tiles': len(visited_tiles),
+            'cleared': cleared,
+        }
+
     if multi_objective:
         norm_score = score / 1000.0
-        norm_explore = max_explore / 100.0
+        norm_explore = len(visited_tiles) / 100.0
         norm_dist = min_dist_to_ghost / 100.0 if min_dist_to_ghost != float('inf') else 0.0
         return 0.5 * norm_score + 0.25 * norm_explore + 0.25 * norm_dist
     else:
         return score
+
+class StatsReporter(neat.reporting.BaseReporter):
+    def post_evaluate(self, config, population, species_set, best_genome):
+        stats = eval_genome(best_genome, config, epsilon=0.0, verbose=True)
+        pct = stats['dots_eaten'] / stats['total_dots'] * 100
+        print(f"  >> Best: {stats['dots_eaten']}/{stats['total_dots']} dots ({pct:.0f}%) | "
+              f"{stats['deaths']} deaths | {stats['steps_used']} steps | "
+              f"{stats['unique_tiles']} unique tiles | "
+              f"{'CLEARED!' if stats['cleared'] else 'not cleared'}")
+
 
 def eval_population(genomes, config):
     """
@@ -426,13 +461,14 @@ def run_neat(config_path="config/neat_config.txt"):
     )
     if TRAIN_UNTIL_CLEAR:
         num_dots = TILE_LAYOUT.count(1)
-        # Threshold only reachable if MAZE_CLEAR_BONUS was awarded (maze fully cleared)
-        config.fitness_threshold = num_dots * 15 + MAZE_CLEAR_BONUS - 50
+        config.fitness_threshold = num_dots * 20 + MAZE_CLEAR_BONUS + num_dots * 3 + 650
         print(f"TRAIN_UNTIL_CLEAR: fitness threshold set to {config.fitness_threshold:.1f} ({num_dots} dots)")
     pop = neat.Population(config)
     pop.add_reporter(neat.StdOutReporter(True))
     stats = neat.StatisticsReporter()
     pop.add_reporter(stats)
+    pop.add_reporter(StatsReporter())
+    pop.add_reporter(neat.Checkpointer(generation_interval=10, filename_prefix='outputs/neat-checkpoint-'))
     winner = pop.run(eval_population, NUM_GENERATIONS)
     print('\nBest genome:\n', winner)
     with open("outputs/best_genome.pkl", "wb") as f:
