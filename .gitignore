@@ -11,10 +11,6 @@ __pycache__/
 *$py.class
 *.so
 
-# Numba JIT cache
-*.nbi
-*.nbc
-
 # Distribution / packaging
 .Python
 build/
@@ -24,10 +20,13 @@ eggs/
 *.egg
 
 # Virtual environments
-.env
 .venv
 env/
+ENV/
 venv/
+
+# Environment / secrets
+.env
 
 # PyCharm / JetBrains
 .idea/
@@ -57,6 +56,12 @@ dmypy.json
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
+
+# Credentials
+.pypirc
+
+# Tool caches
+.cache/
 
 # OS files
 *.log
