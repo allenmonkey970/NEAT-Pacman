@@ -6,7 +6,30 @@ import numpy as np
 import matplotlib.pyplot as plt
 from collections import deque
 from random import choice, random
-from freegames import floor, vector
+from freegames import floor
+
+class Vec:
+    __slots__ = ('x', 'y')
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+    def copy(self):
+        return Vec(self.x, self.y)
+    def move(self, other):
+        self.x += other.x
+        self.y += other.y
+    def __add__(self, other):
+        if isinstance(other, (int, float)):
+            return Vec(self.x + other, self.y + other)
+        return Vec(self.x + other.x, self.y + other.y)
+    def __sub__(self, other):
+        return Vec(self.x - other.x, self.y - other.y)
+    def __abs__(self):
+        return abs(self.x) + abs(self.y)
+    def __eq__(self, other):
+        return self.x == other.x and self.y == other.y
+    def __hash__(self):
+        return hash((self.x, self.y))
 from turtle import *
 from multiprocessing import cpu_count
 
@@ -30,12 +53,12 @@ DEATH_PENALTY = 25           # Penalty per ghost collision (agent respawns inste
 MAX_DEATHS = 8               # Maximum deaths before the episode ends
 
 # Pacman and game layout constants
-PACMAN_INIT = vector(-40, -80)
+PACMAN_INIT = Vec(-40, -80)
 GHOSTS_INIT = [
-    [vector(-180, 160), vector(5, 0)],
-    [vector(-180, -160), vector(0, 5)],
-    [vector(100, 160), vector(0, -5)],
-    [vector(100, -160), vector(-5, 0)],
+    [Vec(-180, 160), Vec(5, 0)],
+    [Vec(-180, -160), Vec(0, 5)],
+    [Vec(100, 160), Vec(0, -5)],
+    [Vec(100, -160), Vec(-5, 0)],
 ]
 TILE_LAYOUT = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -65,7 +88,7 @@ TILE_LAYOUT = [
 state = {'score': 0, 'random_state': 1082}
 path = None   # initialized in replay_winner to avoid tkinter in worker processes
 writer = None # initialized in replay_winner to avoid tkinter in worker processes
-aim = vector(5, 0)
+aim = Vec(5, 0)
 pacman = PACMAN_INIT.copy()
 ghosts = [ [g[0].copy(), g[1].copy()] for g in GHOSTS_INIT ]
 tiles = TILE_LAYOUT.copy()
@@ -136,7 +159,7 @@ def available_moves(sim_pacman, sim_tiles):
     """
     moves = []
     for dx, dy in POSSIBLE_MOVES:
-        pos = vector(sim_pacman.x + dx, sim_pacman.y + dy)
+        pos = Vec(sim_pacman.x + dx, sim_pacman.y + dy)
         if valid(pos):
             moves.append((dx, dy))
     return moves
@@ -307,9 +330,9 @@ def eval_genome(genome, config, epsilon=0.1, multi_objective=False, verbose=Fals
         else:
             move_idx = np.argmax(output)
         dx, dy = POSSIBLE_MOVES[move_idx]
-        next_pos = sim_pacman + vector(dx, dy)
+        next_pos = sim_pacman + Vec(dx, dy)
         if valid(next_pos):
-            sim_pacman.move(vector(dx, dy))
+            sim_pacman.move(Vec(dx, dy))
         else:
             score -= 0.5
 
@@ -363,7 +386,7 @@ def eval_genome(genome, config, epsilon=0.1, multi_objective=False, verbose=Fals
                 if valid(ghost_pos + ghost_dir):
                     ghost_pos.move(ghost_dir)
                 else:
-                    options = [vector(5, 0), vector(-5, 0), vector(0, 5), vector(0, -5)]
+                    options = [Vec(5, 0), Vec(-5, 0), Vec(0, 5), Vec(0, -5)]
                     plan = choice(options)
                     ghost_dir.x = plan.x
                     ghost_dir.y = plan.y
@@ -528,7 +551,7 @@ def replay_winner(gen_file="outputs/best_genome.pkl", export_gif=False, gif_path
     pacman = PACMAN_INIT.copy()
     ghosts = [ [g[0].copy(), g[1].copy()] for g in GHOSTS_INIT ]
     tiles[:] = TILE_LAYOUT.copy()
-    aim = vector(5, 0)
+    aim = Vec(5, 0)
     setup(420, 420, 370, 0)
     hideturtle()
     tracer(False)
@@ -599,8 +622,8 @@ def replay_winner(gen_file="outputs/best_genome.pkl", export_gif=False, gif_path
         output = net.activate(nn_input)
         move_idx = np.argmax(output)
         dx, dy = POSSIBLE_MOVES[move_idx]
-        if valid(pacman + vector(dx, dy)):
-            pacman.move(vector(dx, dy))
+        if valid(pacman + Vec(dx, dy)):
+            pacman.move(Vec(dx, dy))
         idx = offset(pacman)
         if tiles[idx] == 1:
             tiles[idx] = 2
@@ -623,10 +646,10 @@ def replay_winner(gen_file="outputs/best_genome.pkl", export_gif=False, gif_path
                 point.move(course)
             else:
                 options = [
-                    vector(5, 0),
-                    vector(-5, 0),
-                    vector(0, 5),
-                    vector(0, -5),
+                    Vec(5, 0),
+                    Vec(-5, 0),
+                    Vec(0, 5),
+                    Vec(0, -5),
                 ]
                 plan = choice(options)
                 course.x = plan.x
